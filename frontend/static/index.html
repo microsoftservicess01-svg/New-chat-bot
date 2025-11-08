@@ -1,10 +1,167 @@
-<h3>Sign Up / Login (Phone)</h3>
-<input id="phone" placeholder="Phone Number">
-<input id="password" type="password" placeholder="Password">
-<input id="accessKey" placeholder="Admin Key (for signup)">
-<button id="signup">Sign Up</button>
-<hr>
-<input id="phoneLogin" placeholder="Phone Number (for login)">
-<input id="passwordLogin" type="password" placeholder="Password (for login)">
-<button id="login">Login</button>
-<p id="me"></p>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Encrypted Video Chat — Simple</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 12px; }
+    h2, h3 { margin-top: 0; }
+    #container { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+    .card { border: 1px solid #ddd; padding: 10px; border-radius: 10px; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    input, button, select { margin: 5px 0; padding: 6px; width: 100%; font-size: 14px; border-radius: 6px; border: 1px solid #ccc; }
+    button { background: #007bff; color: #fff; border: none; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    video { width: 100%; height: auto; background: #000; border-radius: 8px; }
+    #publicChat, #privateChat { height: 220px; overflow-y: auto; background: #f9f9f9; padding: 8px; border-radius: 6px; }
+    #me { margin-top: 8px; color: green; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h2>🔒 Encrypted Video Chat</h2>
+
+  <!-- === AUTH SECTION === -->
+  <div id="auth" class="card">
+    <h3>Sign Up / Login (Phone)</h3>
+
+    <input id="phone" placeholder="Phone Number">
+    <input id="password" type="password" placeholder="Password">
+    <input id="accessKey" placeholder="Admin Key (for signup)">
+    <button id="signup">Sign Up</button>
+
+    <hr>
+
+    <input id="phoneLogin" placeholder="Phone Number (for login)">
+    <input id="passwordLogin" type="password" placeholder="Password (for login)">
+    <button id="login">Login</button>
+
+    <p id="me"></p>
+  </div>
+
+  <!-- === CHAT SECTION === -->
+  <div id="container">
+    <div class="card">
+      <h3>🌍 Public Chat</h3>
+      <div id="publicChat"></div>
+      <input id="publicInput" placeholder="Say something public">
+      <button id="publicSend">Send</button>
+    </div>
+
+    <div class="card">
+      <h3>🔒 Private Chat + Video</h3>
+      <select id="userList"></select>
+      <div id="privateChat"></div>
+      <input id="privateInput" placeholder="Private message">
+      <button id="privateSend">Send</button>
+      <hr>
+      <button id="callBtn">Call Selected User</button>
+      <video id="localVideo" autoplay muted playsinline></video>
+      <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+  </div>
+
+  <!-- === SOCKET.IO === -->
+  <script src="https://cdn.socket.io/4.7.1/socket.io.min.js"></script>
+
+  <script>
+    const API_BASE = "https://new-chat-bot-4.onrender.com"; // your backend Render URL
+    let socket, token, myId;
+    const meEl = document.getElementById('me');
+
+    async function api(path, method='GET', body) {
+      const res = await fetch(API_BASE + '/api/' + path, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {})
+        },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      return res.json();
+    }
+
+    // === SIGNUP ===
+    signup.onclick = async () => {
+      const r = await api('signup', 'POST', {
+        phone: document.getElementById('phone').value,
+        password: document.getElementById('password').value,
+        accessKey: document.getElementById('accessKey').value
+      });
+      if (r.token) {
+        token = r.token;
+        myId = r.id;
+        meEl.innerText = `✅ Signed up as ${r.id}`;
+        startSocket();
+        refreshUsers();
+      } else alert(JSON.stringify(r));
+    };
+
+    // === LOGIN ===
+    login.onclick = async () => {
+      const r = await api('login', 'POST', {
+        phone: document.getElementById('phoneLogin').value,
+        password: document.getElementById('passwordLogin').value
+      });
+      if (r.token) {
+        token = r.token;
+        myId = r.id;
+        meEl.innerText = `✅ Logged in as ${r.id}`;
+        startSocket();
+        refreshUsers();
+      } else alert(JSON.stringify(r));
+    };
+
+    // === SOCKET CONNECTION ===
+    function startSocket() {
+      socket = io(API_BASE, { path: '/socket.io', autoConnect: true });
+      socket.on('connect', () => {
+        console.log('Socket connected');
+        socket.emit('auth', token);
+      });
+      socket.on('auth-ok', (u) => console.log('Auth ok for', u));
+      socket.on('public-message', (msg) => addMsg('publicChat', msg));
+      socket.on('private-signal', (msg) => addMsg('privateChat', msg));
+    }
+
+    // === CHAT HANDLERS ===
+    publicSend.onclick = () => {
+      const val = publicInput.value.trim();
+      if (!val) return;
+      socket.emit('public-message', val);
+      publicInput.value = '';
+    };
+
+    privateSend.onclick = () => {
+      const to = userList.value;
+      const val = privateInput.value.trim();
+      if (!val || !to) return;
+      socket.emit('private-signal', { to, payload: val });
+      addMsg('privateChat', { from: 'You', text: val });
+      privateInput.value = '';
+    };
+
+    function addMsg(divId, msg) {
+      const div = document.getElementById(divId);
+      const p = document.createElement('p');
+      p.textContent = `${msg.from}: ${msg.text}`;
+      div.appendChild(p);
+      div.scrollTop = div.scrollHeight;
+    }
+
+    async function refreshUsers() {
+      const users = await api('users');
+      const sel = document.getElementById('userList');
+      sel.innerHTML = '';
+      users.forEach(u => {
+        if (u.id !== myId) {
+          const opt = document.createElement('option');
+          opt.value = u.id;
+          opt.text = u.id;
+          sel.add(opt);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
+
