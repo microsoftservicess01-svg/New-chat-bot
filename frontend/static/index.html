@@ -1,12 +1,240 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Encrypted Video Chat</title>
+  <title>Encrypted Video Chat App</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #fafafa;
+      padding: 20px;
+      margin: 0;
+    }
+    h2 {
+      text-align: center;
+      color: #222;
+    }
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    input, select, button {
+      padding: 8px;
+      margin: 5px 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    video {
+      width: 100%;
+      border-radius: 10px;
+      background: #000;
+    }
+    #publicChat, #privateChat {
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      height: 200px;
+      overflow-y: auto;
+      padding: 5px;
+      font-size: 14px;
+    }
+  </style>
 </head>
 <body>
   <h2>Encrypted Video Chat App</h2>
-  <p>Frontend ready. Connect to backend via /api.</p>
+
+  <div class="card">
+    <h3>Sign Up / Login</h3>
+    <input id="name" placeholder="Name">
+    <input id="password" type="password" placeholder="Password">
+    <input id="accessKey" placeholder="Access Key (for signup)">
+    <button id="signup">Sign Up</button>
+    <input id="idLogin" placeholder="Your ID (for login)">
+    <button id="login">Login</button>
+    <p id="me"></p>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h3>Public Chat</h3>
+      <div id="publicChat"></div>
+      <input id="publicInput" placeholder="Say something...">
+      <button id="publicSend">Send</button>
+    </div>
+
+    <div class="card">
+      <h3>Private Chat + Video</h3>
+      <select id="userList"></select>
+      <div id="privateChat"></div>
+      <input id="privateInput" placeholder="Private message">
+      <button id="privateSend">Send</button>
+      <button id="callBtn">Call Selected User</button>
+      <video id="localVideo" autoplay muted playsinline></video>
+      <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.1/socket.io.min.js"></script>
+  <script>
+    // === Backend Config ===
+    const API_BASE = "https://new-chat-bot-4.onrender.com"; // backend URL
+    const socket = io(API_BASE, { path: '/socket.io', autoConnect: false });
+
+    let token = null;
+    let myId = null;
+    let pc = null;
+    let localStream = null;
+
+    async function api(path, method='GET', body) {
+      const res = await fetch(API_BASE + '/api/' + path, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {})
+        },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      return res.json();
+    }
+
+    const nameEl = document.getElementById('name');
+    const pwdEl = document.getElementById('password');
+    const accessKeyEl = document.getElementById('accessKey');
+    const signupBtn = document.getElementById('signup');
+    const loginBtn = document.getElementById('login');
+    const idLoginEl = document.getElementById('idLogin');
+    const meEl = document.getElementById('me');
+    const userListEl = document.getElementById('userList');
+    const publicChat = document.getElementById('publicChat');
+    const privateChat = document.getElementById('privateChat');
+    const publicInput = document.getElementById('publicInput');
+    const publicSend = document.getElementById('publicSend');
+    const privateInput = document.getElementById('privateInput');
+    const privateSend = document.getElementById('privateSend');
+    const callBtn = document.getElementById('callBtn');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+
+    // === SIGNUP ===
+    signupBtn.onclick = async () => {
+      const r = await api('signup', 'POST', {
+        name: nameEl.value,
+        password: pwdEl.value,
+        accessKey: accessKeyEl.value
+      });
+      if (r.token) {
+        token = r.token;
+        myId = r.id;
+        meEl.innerText = `Logged in as ${r.id}`;
+        startSocket();
+        refreshUsers();
+      } else alert(JSON.stringify(r));
+    };
+
+    // === LOGIN ===
+    loginBtn.onclick = async () => {
+      const r = await api('login', 'POST', {
+        id: idLoginEl.value,
+        password: pwdEl.value
+      });
+      if (r.token) {
+        token = r.token;
+        myId = r.id;
+        meEl.innerText = `Logged in as ${r.id}`;
+        startSocket();
+        refreshUsers();
+      } else alert(JSON.stringify(r));
+    };
+
+    async function refreshUsers() {
+      const list = await api('users');
+      userListEl.innerHTML = '';
+      list.filter(u => u.id !== myId).forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u.id;
+        opt.textContent = `${u.name} (${u.id.slice(0, 6)})`;
+        userListEl.appendChild(opt);
+      });
+    }
+
+    function startSocket() {
+      socket.connect();
+      socket.on('connect', () => socket.emit('auth', token));
+      socket.on('auth-ok', () => console.log('✅ Connected to backend'));
+      socket.on('public-message', m => {
+        publicChat.innerHTML += `<div><b>${m.from}</b>: ${m.text}</div>`;
+      });
+      socket.on('private-signal', obj => handleSignal(obj.from, obj.payload));
+    }
+
+    publicSend.onclick = () => {
+      if (publicInput.value) {
+        socket.emit('public-message', publicInput.value);
+        publicInput.value = '';
+      }
+    };
+
+    privateSend.onclick = () => {
+      const to = userListEl.value;
+      if (!to) return alert('Select a user');
+      socket.emit('private-signal', { to, payload: { type: 'msg', text: privateInput.value } });
+      privateChat.innerHTML += `<div><b>me</b>: ${privateInput.value}</div>`;
+      privateInput.value = '';
+    };
+
+    callBtn.onclick = async () => {
+      const to = userListEl.value;
+      if (!to) return alert('Select a user');
+      await ensureLocalStream();
+      pc = new RTCPeerConnection();
+      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+      pc.ontrack = e => (remoteVideo.srcObject = e.streams[0]);
+      pc.onicecandidate = e => {
+        if (e.candidate)
+          socket.emit('private-signal', { to, payload: { type: 'ice', candidate: e.candidate } });
+      };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('private-signal', { to, payload: { type: 'offer', sdp: offer.sdp } });
+    };
+
+    async function handleSignal(from, payload) {
+      if (payload.type === 'offer') {
+        await ensureLocalStream();
+        pc = new RTCPeerConnection();
+        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        pc.ontrack = e => (remoteVideo.srcObject = e.streams[0]);
+        pc.onicecandidate = e => {
+          if (e.candidate)
+            socket.emit('private-signal', { to: from, payload: { type: 'ice', candidate: e.candidate } });
+        };
+        await pc.setRemoteDescription({ type: 'offer', sdp: payload.sdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('private-signal', { to: from, payload: { type: 'answer', sdp: answer.sdp } });
+      } else if (payload.type === 'answer') {
+        await pc.setRemoteDescription({ type: 'answer', sdp: payload.sdp });
+      } else if (payload.type === 'ice') {
+        await pc.addIceCandidate(payload.candidate);
+      } else if (payload.type === 'msg') {
+        privateChat.innerHTML += `<div><b>${from}</b>: ${payload.text}</div>`;
+      }
+    }
+
+    async function ensureLocalStream() {
+      if (!localStream) localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
+    }
+  </script>
 </body>
 </html>
+
