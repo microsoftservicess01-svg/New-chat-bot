@@ -1,0 +1,49 @@
+# render.yaml — Infrastructure-as-Code for Render Deployment
+# Deploys: 
+#   - backend (Node.js WebSocket + API)
+#   - frontend (static web via Nginx)
+#   - nginx reverse proxy (optional, can serve as edge load balancer)
+
+services:
+  # === Backend Service (Node + Socket.IO) ===
+  - type: web
+    name: encrypted-video-backend
+    env: docker
+    plan: free
+    dockerfilePath: ./backend/Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: JWT_SECRET
+        sync: false   # set in Render dashboard manually
+      - key: ADMIN_KEY
+        sync: false   # set in Render dashboard manually
+    healthCheckPath: /api/users
+    buildCommand: ""
+    startCommand: "node server.js"
+
+  # === Frontend Service (Static HTML + JS via Nginx) ===
+  - type: web
+    name: encrypted-video-frontend
+    env: docker
+    plan: free
+    dockerfilePath: ./frontend/Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 80
+    buildCommand: ""
+    startCommand: "nginx -g 'daemon off;'"
+
+  # === Nginx Reverse Proxy (optional unified entrypoint) ===
+  - type: web
+    name: encrypted-video-nginx
+    env: docker
+    plan: free
+    dockerfilePath: ./nginx/nginx.Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: BACKEND_URL
+        value
+        
