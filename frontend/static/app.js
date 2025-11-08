@@ -1,14 +1,17 @@
-// Change API and socket base URL
-const API_BASE = "https://new-chat-bot-4.onrender.com"; // backend URL
+// === CONFIG: Update this to your backend Render URL ===
+const API_BASE = "https://new-chat-bot-4.onrender.com"; // <-- your backend URL
 
-// For Socket.IO connection:
+// === SOCKET.IO connection to backend ===
 const socket = io(API_BASE, { path: '/socket.io', autoConnect: false });
 
-// Update API calls to use API_BASE
-async function api(path, method='GET', body){
+// === API helper ===
+async function api(path, method='GET', body) {
   const res = await fetch(API_BASE + '/api/' + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {})
+    },
     body: body ? JSON.stringify(body) : undefined
   });
   return res.json();
